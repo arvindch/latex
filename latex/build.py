@@ -49,15 +49,22 @@ class LatexMkBuilder(LatexBuilder):
     The build process consists of copying the source file to a temporary
     directory and running latexmk on it, which will take care of reruns.
 
-    :param latexmk: The path to the ``latexmk`` binary (will looked up on
+    :param latexmk: The path to the ``latexmk`` binary (will be looked up on
                     ``$PATH``).
-    :param pdflatex: The path to the ``pdflatex`` binary (will looked up on
+    :param pdflatex: The path to the ``pdflatex`` binary (will be looked up on
                     ``$PATH``).
+    :param xelatex: The path to the ``xelatex`` binary (will be looked up on
+                    ``$PATH``).
+    :param variant: The LaTeX variant to use. Valid choices are
+                    `pdflatex` and `xelatex`. Defaults to `pdflatex`.
     """
 
-    def __init__(self, latexmk='latexmk', pdflatex='pdflatex'):
+    def __init__(self, latexmk='latexmk', pdflatex='pdflatex',
+                 xelatex='xelatex', variant='pdflatex'):
         self.latexmk = latexmk
         self.pdflatex = pdflatex
+        self.xelatex = xelatex
+        self.variant = variant
 
     @data('source')
     def build_pdf(self, source, texinputs=[]):
@@ -78,10 +85,18 @@ class LatexMkBuilder(LatexBuilder):
                          '%O',
                          '%S', ]
 
-            args = [self.latexmk,
-                    '-pdf',
-                    '-pdflatex={}'.format(' '.join(latex_cmd)),
-                    tmp.name, ]
+            if self.variant == 'pdflatex':
+                args = [self.latexmk,
+                        '-pdf',
+                        '-pdflatex={}'.format(' '.join(latex_cmd)),
+                        tmp.name, ]
+            elif self.variant == 'xelatex':
+                args = [self.latexmk,
+                        '-xelatex',
+                        tmp.name, ]
+            else:
+                raise ValueError('Invalid LaTeX variant: {}'.format(
+                    self.variant))
 
             # create environment
             newenv = os.environ.copy()
@@ -100,7 +115,13 @@ class LatexMkBuilder(LatexBuilder):
             return I(open(output_fn, 'rb').read(), encoding=None)
 
     def is_available(self):
-        return bool(which(self.pdflatex)) and bool(which(self.latexmk))
+        if not which(self.latexmk):
+            return False
+
+        if self.variant == 'pdflatex':
+            return bool(which(self.pdflatex))
+        if self.variant == 'xelatex':
+            return bool(which(self.xelatex))
 
 
 class PdfLatexBuilder(LatexBuilder):
@@ -174,10 +195,16 @@ class PdfLatexBuilder(LatexBuilder):
         return bool(which(self.pdflatex))
 
 
-PREFERRED_BUILDERS = [LatexMkBuilder, PdfLatexBuilder, ]
+BUILDERS = {
+    'latexmk': LatexMkBuilder,
+    'pdflatex': PdfLatexBuilder,
+    'xelatexmk': lambda: LatexMkBuilder(variant='xelatex'),
+}
+
+PREFERRED_BUILDERS = ('latexmk', 'pdflatex', 'xelatexmk')
 
 
-def build_pdf(source, texinputs=[]):
+def build_pdf(source, texinputs=[], builder=None):
     """Builds a LaTeX source to PDF.
 
     Will automatically instantiate an available builder (or raise a
@@ -186,8 +213,19 @@ def build_pdf(source, texinputs=[]):
 
     Parameters are passed on to the builder's
     :meth:`~latex.build.LatexBuilder.build_pdf` function.
+
+    :param builder: Specify which builder should be used - ``latexmk``,
+                    ``pdflatex`` or ``xelatexmk``.
     """
-    for bld_cls in PREFERRED_BUILDERS:
+    if builder is None:
+        builders = PREFERRED_BUILDERS
+    elif builder not in BUILDERS:
+        raise RuntimeError('Invalid Builder specified')
+    else:
+        builders = (builder, )
+
+    for bld in builders:
+        bld_cls = BUILDERS[bld]
         builder = bld_cls()
         if not builder.is_available():
             continue
